@@ -1,6 +1,9 @@
-"""每小时由 GitHub Actions 运行：从 FRED 抓取宏观序列，写入 data/fred.json"""
-import csv, io, json, os, time, urllib.request
+import json, os, sys, time, urllib.request
 from datetime import date, datetime, timedelta, timezone
+
+KEY = os.environ.get('FRED_API_KEY', '').strip()
+if not KEY:
+    sys.exit('缺少 FRED_API_KEY')
 
 SERIES = {
     'SP500':'d','NASDAQCOM':'d','DTWEXBGS':'d','DCOILBRENTEU':'d','VIXCLS':'d',
@@ -16,23 +19,23 @@ BACK = {'d':800,'w':1150,'m':2650,'q':2650}
 def get(url):
     for i in range(3):
         try:
-            req = urllib.request.Request(url, headers={'User-Agent':'Mozilla/5.0 macro-dashboard'})
-            return urllib.request.urlopen(req, timeout=40).read().decode('utf-8')
+            return json.loads(urllib.request.urlopen(url, timeout=20).read())
         except Exception as e:
-            print('retry', url, e); time.sleep(4 * (i + 1))
+            print('  retry', i + 1, e, flush=True); time.sleep(2 * (i + 1))
     return None
 
 out = {}
 for sid, f in SERIES.items():
-    cosd = (date.today() - timedelta(days=BACK[f])).isoformat()
-    txt = get(f'https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}&cosd={cosd}')
-    if not txt: continue
+    start = (date.today() - timedelta(days=BACK[f])).isoformat()
+    j = get(f'https://api.stlouisfed.org/fred/series/observations?series_id={sid}'
+            f'&api_key={KEY}&file_type=json&observation_start={start}')
     rows = []
-    for r in list(csv.reader(io.StringIO(txt)))[1:]:
-        try: rows.append([r[0], float(r[1])])
-        except (ValueError, IndexError): pass
+    for o in (j or {}).get('observations', []):
+        try: rows.append([o['date'], float(o['value'])])
+        except ValueError: pass
     if rows: out[sid] = rows
-    print(sid, len(rows))
+    print(sid, len(rows), flush=True)
+    time.sleep(0.3)
 
 os.makedirs('data', exist_ok=True)
 path = 'data/fred.json'
@@ -40,6 +43,7 @@ old = {}
 if os.path.exists(path):
     try: old = json.load(open(path)).get('series', {})
     except Exception: pass
-merged = {**old, **out}  # 某个序列失败时保留上次数据
 with open(path, 'w') as fh:
-    json.dump({'updated': datetime.now(timezone.utc).isoformat(timespec='seconds'), 'series': merged}, fh, separators=(',', ':'))
+    json.dump({'updated': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+               'series': {**old, **out}}, fh, separators=(',', ':'))
+print('done', len(out), 'series', flush=True)
