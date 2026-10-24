@@ -11,12 +11,15 @@ permissions:
 jobs:
   update:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python fetch_fred.py
+      - run: python -u fetch_fred.py
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
       - run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898599+github-actions[bot]@users.noreply.github.com"
